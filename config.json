@@ -3,15 +3,15 @@
     "symbol": "XAUUSDm",
     "timeframe": "M5",
     "candles": 100,
-    "account": "EXNESS",
-    "trade_mode": "SCALPING",
+    "account": "FINEX",
+    "trade_mode": "CONSERVATIVE",
     "auto_trade": true,
     "lot": 0.01,
     "slippage": 20,
     "auto_close_profit": true,
     "auto_close_target": 0.4,
     "auto_analyze": true,
-    "auto_analyze_interval": 1,
+    "auto_analyze_interval": 15,
     "bep": true,
     "bep_min_profit": 0.2,
     "bep_spread_multiplier": 1.0,
@@ -20,16 +20,16 @@
     "step_step": 0.1,
     "trade_always_on": true,
     "entry_decimals": 1,
-    "signal_threshold": "LOW",
-    "enable_scalping": true,
+    "signal_threshold": "HIGH",
+    "enable_scalping": false,
     "enable_pattern_trading": true,
-    "enable_breakout_trading": true,
+    "enable_breakout_trading": false,
     "ignore_economic_calendar": true,
-    "max_daily_trades": 100,
-    "min_signal_strength": 0.05,
+    "max_daily_trades": 10,
+    "min_signal_strength": 0.35,
     "max_positions_per_symbol": 3,
-    "max_total_positions": 10,
-    "enable_multi_symbol": true,
+    "max_total_positions": 100,
+    "enable_multi_symbol": false,
     "enable_multi_timeframe": true,
     "symbols_to_trade": [
       "XAUUSDm",
@@ -76,7 +76,7 @@
     ],
     "accounts": [
       "DEMO",
-      "EXNESS"
+      "FINEX"
     ]
   }
 }
