@@ -1,0 +1,58 @@
+import ssl
+from typing import List, Union, Optional
+from . import functions as fn
+from . import glob
+
+
+class LoginError(AttributeError):
+    pass
+
+
+class WebRequestError(ValueError):
+    pass
+
+
+def getStockSplits(
+    ticker: Optional[Union[str, List[str]]] = None,
+    country: Optional[Union[str, List[str]]] = None,
+    startDate: Optional[str] = None,
+    endDate: Optional[str] = None,
+    output_type: Optional[str] = None,
+):
+    """
+    Returns stock splits calendar data.
+    ==========================================================
+    Parameters:
+    -----------
+    ticker: string or list of strings, optional
+            Get stock splits for the ticker/s specified.
+
+    country: string or list of strings, optional
+            Get stock splits for the country/s specified.
+
+    startDate: string with format: YYYY-MM-DD.
+            For example: '2023-09-01'
+
+    endDate: string with format: YYYY-MM-DD.
+            For example: '2023-09-30'
+
+    Example:
+    --------
+    getStockSplits(ticker = 'MMET', startDate='2023-09-01', endDate='2023-12-01')
+    getStockSplits(ticker = ['MMET', 'REX'], startDate='2023-09-01')
+    getStockSplits(coutnry = ['Canada', 'United States'])
+    getStockSplits()
+
+    """
+
+    fn.setup_ssl_context()
+
+    linkAPI = "/splits"
+
+    if ticker and fn.stringOrList(ticker):
+        linkAPI += "/ticker/" + fn.stringOrList(ticker)
+    elif country and fn.stringOrList(country):
+        linkAPI += "/country/" + fn.stringOrList(country)
+
+    linkAPI = fn.checkDates(linkAPI, startDate, endDate)
+    return fn.dataRequest(api_request=linkAPI, output_type=output_type)

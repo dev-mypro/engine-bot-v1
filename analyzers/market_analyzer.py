@@ -1,22 +1,20 @@
-# market_analyzer.py - AGGRESSIVE TRADING VERSION
-import requests
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-import yfinance as yf
-from typing import Dict, Optional, List
+from typing import Dict
+from analyzers.indicators import (
+    calculate_rsi, calculate_macd, calculate_stochastic,
+    calculate_atr, calculate_atr_value, calculate_bollinger_bands
+)
+from analyzers.patterns import detect_candlestick_patterns, detect_breakouts, find_support_resistance
+from analyzers.sentiment import analyze_news_simple, get_economic_calendar_light
 import MetaTrader5 as mt5
 
 class MarketAnalyzer:
     def __init__(self, news_api_key: str = None, te_key: str = None):
         self.news_api_key = news_api_key
         self.te_key = te_key
-        self.forex_factory_url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
         
-    def analyze_market(self, df: pd.DataFrame, symbol: str, config: dict = None) -> Dict:
-        """Comprehensive market analysis dengan mode aggressive"""
-        
-        # Default config if not provided
+    def analyze_market(self, df: pd.DataFrame, symbol: str, config: dict = None, ai_bias: str = 'NEUTRAL') -> Dict:
+        """Comprehensive market analysis dengan filter trade_mode"""
         if config is None:
             config = {
                 'current': {
@@ -30,36 +28,58 @@ class MarketAnalyzer:
                 }
             }
         
+        trade_mode = config['current'].get('trade_mode', 'AGGRESSIVE').upper()
+        
         analysis = {
             'technical': self._analyze_technical(df),
-            'patterns': self._detect_candlestick_patterns(df),
-            'breakout': self._detect_breakouts(df),
-            'support_resistance': self._find_support_resistance(df),
+            'patterns': detect_candlestick_patterns(df),
+            'breakout': detect_breakouts(df),
+            'support_resistance': find_support_resistance(df),
             'scalping': self._scalping_signals(df),
-            'news': self._analyze_news_simple(symbol),  # Simplified
-            'calendar': self._get_economic_calendar_light(config),  # Lighter version
+            'news': analyze_news_simple(symbol),
+            'calendar': get_economic_calendar_light(config),
             'overall': {'signal': 'WAIT', 'strength': 0, 'reasons': []}
         }
         
-        # Combine all analyses
-        analysis['overall'] = self._combine_signals_aggressive(analysis, config)
+        if trade_mode == 'CONSERVATIVE':
+            confluence_data = self._analyze_strict_confluence(df)
+            tech_signal = confluence_data.get('signal', 'WAIT')
+            tech_strength = confluence_data.get('strength', 0.0)
+            min_strength = config['current'].get('min_signal_strength', 0.8)
+            
+            final_signal = 'WAIT'
+            if tech_signal in ['BUY', 'SELL'] and tech_strength >= min_strength:
+                final_signal = tech_signal
+                reason = f"Strict Confluence Matched: {tech_signal} (Strength: {tech_strength})"
+            else:
+                reason = "Menunggu setup Confluence terbentuk (EMA + RSI + MACD + ATR)"
+                
+            analysis['overall'] = {
+                'action': final_signal if final_signal != 'WAIT' else None,
+                'signal': final_signal,
+                'strength': tech_strength,
+                'reasons': [reason] + confluence_data.get('reasons', []),
+                'atr': confluence_data.get('atr_value', calculate_atr_value(df)),
+                'close_price': confluence_data.get('close_price', df['close'].iloc[-1] if not df.empty else 0)
+            }
+        else:
+            analysis['overall'] = self._combine_signals_aggressive(analysis, config, ai_bias=ai_bias)
+            
         return analysis
-    
+
     def _analyze_technical(self, df: pd.DataFrame) -> Dict:
         """Fast technical analysis for aggressive trading"""
         if df.empty or len(df) < 50:
             return {'signal': 'WAIT', 'signals': [], 'bullish': 0, 'bearish': 0}
         
-        # Quick indicators
+        df = df.copy()
         df['SMA_10'] = df['close'].rolling(window=10).mean()
         df['SMA_20'] = df['close'].rolling(window=20).mean()
         df['SMA_50'] = df['close'].rolling(window=50).mean()
         df['EMA_9'] = df['close'].ewm(span=9).mean()
-        df['RSI'] = self._calculate_rsi(df['close'], period=14)
-        df['MACD'], df['Signal'], _ = self._calculate_macd(df['close'])
-        
-        # Fast Stochastic
-        df['Stoch_K'], df['Stoch_D'] = self._calculate_stochastic(df, period=5)
+        df['RSI'] = calculate_rsi(df['close'], period=14)
+        df['MACD'], df['Signal'], _ = calculate_macd(df['close'])
+        df['Stoch_K'], df['Stoch_D'] = calculate_stochastic(df, period=5)
         
         signals = []
         bullish = 0
@@ -68,15 +88,11 @@ class MarketAnalyzer:
         last_close = df['close'].iloc[-1]
         last_sma10 = df['SMA_10'].iloc[-1]
         last_sma20 = df['SMA_20'].iloc[-1]
-        last_sma50 = df['SMA_50'].iloc[-1]
         last_rsi = df['RSI'].iloc[-1]
         last_macd = df['MACD'].iloc[-1]
         last_signal = df['Signal'].iloc[-1]
         last_stoch = df['Stoch_K'].iloc[-1]
         
-        # === AGGRESSIVE SIGNALS ===
-        
-        # 1. Fast MA Cross
         if last_sma10 > last_sma20:
             signals.append("EMA Cross UP")
             bullish += 1
@@ -84,21 +100,18 @@ class MarketAnalyzer:
             signals.append("EMA Cross DOWN")
             bearish += 1
         
-        # 2. Price Position (more sensitive)
         if last_close > last_sma10:
             bullish += 1
         else:
             bearish += 1
         
-        # 3. RSI - More lenient thresholds
-        if last_rsi < 40:  # Changed from 30
+        if last_rsi < 40:
             signals.append(f"RSI Low ({last_rsi:.0f})")
             bullish += 2
-        elif last_rsi > 60:  # Changed from 70
+        elif last_rsi > 60:
             signals.append(f"RSI High ({last_rsi:.0f})")
             bearish += 2
         
-        # 4. MACD - Immediate signals
         if last_macd > last_signal:
             signals.append("MACD Bullish")
             bullish += 1
@@ -106,7 +119,6 @@ class MarketAnalyzer:
             signals.append("MACD Bearish")
             bearish += 1
         
-        # 5. Stochastic - Fast signals
         if last_stoch < 30:
             signals.append(f"Stoch Oversold")
             bullish += 2
@@ -114,7 +126,6 @@ class MarketAnalyzer:
             signals.append(f"Stoch Overbought")
             bearish += 2
         
-        # 6. Momentum (short period)
         momentum_3 = (last_close / df['close'].iloc[-4] - 1) * 100
         if momentum_3 > 0.1:
             signals.append(f"Momentum UP ({momentum_3:+.2f}%)")
@@ -123,7 +134,6 @@ class MarketAnalyzer:
             signals.append(f"Momentum DOWN ({momentum_3:+.2f}%)")
             bearish += 1
         
-        # Decision with LOW threshold
         if bullish > bearish:
             signal = 'BUY'
         elif bearish > bullish:
@@ -138,391 +148,277 @@ class MarketAnalyzer:
             'bearish': bearish,
             'confidence': abs(bullish - bearish) / max(bullish + bearish, 1)
         }
-    
-    def _detect_candlestick_patterns(self, df: pd.DataFrame) -> Dict:
-        """Detect bullish/bearish candlestick patterns"""
-        if len(df) < 3:
-            return {'signal': 'WAIT', 'patterns': []}
+
+    def _scalping_signals(self, df: pd.DataFrame) -> Dict:
+        """SUPER-STRICT v4 SCALPING: Maximum accuracy with 3-candle momentum + price action"""
+        if len(df) < 50:
+            return {'signal': 'WAIT', 'signals': [], 'score': 0, 'strength': 0}
         
-        patterns = []
-        signal = 'WAIT'
+        df = df.copy()
+        signals = []
+        score = 0
+        confirmation_count = 0
         
-        # Get last 3 candles
-        c0 = df.iloc[-1]  # Current
-        c1 = df.iloc[-2]  # Previous
-        c2 = df.iloc[-3]  # Before previous
-        
-        # Bullish Patterns
-        
-        # 1. Bullish Engulfing
-        if (c1['close'] < c1['open'] and  # Previous bearish
-            c0['close'] > c0['open'] and  # Current bullish
-            c0['open'] < c1['close'] and
-            c0['close'] > c1['open']):
-            patterns.append("Bullish Engulfing (Strong Buy)")
-            signal = 'BUY'
-        
-        # 2. Hammer
-        body = abs(c0['close'] - c0['open'])
-        lower_shadow = min(c0['close'], c0['open']) - c0['low']
-        upper_shadow = c0['high'] - max(c0['close'], c0['open'])
-        
-        if lower_shadow > body * 2 and upper_shadow < body * 0.3:
-            patterns.append("Hammer (Buy)")
-            if signal != 'SELL':
-                signal = 'BUY'
-        
-        # 3. Morning Star (3 candles)
-        if (c2['close'] < c2['open'] and  # First bearish
-            abs(c1['close'] - c1['open']) < body * 0.3 and  # Small body
-            c0['close'] > c0['open'] and  # Third bullish
-            c0['close'] > (c2['open'] + c2['close']) / 2):
-            patterns.append("Morning Star (Strong Buy)")
-            signal = 'BUY'
-        
-        # Bearish Patterns
-        
-        # 4. Bearish Engulfing
-        if (c1['close'] > c1['open'] and  # Previous bullish
-            c0['close'] < c0['open'] and  # Current bearish
-            c0['open'] > c1['close'] and
-            c0['close'] < c1['open']):
-            patterns.append("Bearish Engulfing (Strong Sell)")
-            signal = 'SELL'
-        
-        # 5. Shooting Star
-        if upper_shadow > body * 2 and lower_shadow < body * 0.3:
-            patterns.append("Shooting Star (Sell)")
-            if signal != 'BUY':
-                signal = 'SELL'
-        
-        # 6. Evening Star
-        if (c2['close'] > c2['open'] and  # First bullish
-            abs(c1['close'] - c1['open']) < body * 0.3 and  # Small body
-            c0['close'] < c0['open'] and  # Third bearish
-            c0['close'] < (c2['open'] + c2['close']) / 2):
-            patterns.append("Evening Star (Strong Sell)")
-            signal = 'SELL'
-        
-        # 7. Three White Soldiers (Bullish)
-        if (c2['close'] > c2['open'] and
-            c1['close'] > c1['open'] and
-            c0['close'] > c0['open'] and
-            c1['close'] > c2['close'] and
-            c0['close'] > c1['close']):
-            patterns.append("Three White Soldiers (Strong Buy)")
-            signal = 'BUY'
-        
-        # 8. Three Black Crows (Bearish)
-        if (c2['close'] < c2['open'] and
-            c1['close'] < c1['open'] and
-            c0['close'] < c0['open'] and
-            c1['close'] < c2['close'] and
-            c0['close'] < c1['close']):
-            patterns.append("Three Black Crows (Strong Sell)")
-            signal = 'SELL'
-        
-        return {
-            'signal': signal,
-            'patterns': patterns,
-            'count': len(patterns)
-        }
-    
-    def _detect_breakouts(self, df: pd.DataFrame) -> Dict:
-        """Detect support/resistance breakouts"""
-        if len(df) < 20:
-            return {'signal': 'WAIT', 'breakouts': []}
-        
-        breakouts = []
-        signal = 'WAIT'
+        df['RSI'] = calculate_rsi(df['close'], period=14)
+        df['RSI_5'] = calculate_rsi(df['close'], period=5)
+        df['MACD'], df['Signal'], df['Histogram'] = calculate_macd(df['close'])
+        df['EMA_5'] = df['close'].ewm(span=5).mean()
+        df['EMA_9'] = df['close'].ewm(span=9).mean()
+        df['EMA_21'] = df['close'].ewm(span=21).mean()
+        df['ATR'] = calculate_atr(df)
+        df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = calculate_bollinger_bands(df, period=20, std_dev=2)
         
         last_close = df['close'].iloc[-1]
+        last_open = df['open'].iloc[-1]
         last_high = df['high'].iloc[-1]
         last_low = df['low'].iloc[-1]
         
-        # Recent high/low (last 20 bars)
-        recent_high = df['high'].iloc[-20:-1].max()
-        recent_low = df['low'].iloc[-20:-1].min()
+        prev_close = df['close'].iloc[-2]
+        prev_open = df['open'].iloc[-2]
+        prev_low = df['low'].iloc[-2]
+        prev_high = df['high'].iloc[-2]
         
-        # Breakout detection
-        if last_close > recent_high:
-            breakouts.append(f"Resistance Breakout at {recent_high:.5f}")
-            signal = 'BUY'
+        prev2_close = df['close'].iloc[-3]
+        prev2_open = df['open'].iloc[-3]
+        prev2_low = df['low'].iloc[-3]
+        prev2_high = df['high'].iloc[-3]
         
-        if last_close < recent_low:
-            breakouts.append(f"Support Breakdown at {recent_low:.5f}")
-            signal = 'SELL'
+        last_rsi = df['RSI'].iloc[-1]
+        last_macd = df['MACD'].iloc[-1]
+        last_signal_line = df['Signal'].iloc[-1]
+        last_histogram = df['Histogram'].iloc[-1]
         
-        # High volatility breakout
-        atr = self._calculate_atr_value(df)
-        price_range = df['high'].iloc[-1] - df['low'].iloc[-1]
+        last_ema5 = df['EMA_5'].iloc[-1]
+        last_ema9 = df['EMA_9'].iloc[-1]
+        last_ema21 = df['EMA_21'].iloc[-1]
         
-        if price_range > atr * 1.5:
-            breakouts.append("High Volatility Breakout")
-            # Direction based on close position
-            if df['close'].iloc[-1] > (df['high'].iloc[-1] + df['low'].iloc[-1]) / 2:
-                if signal != 'SELL':
-                    signal = 'BUY'
-            else:
-                if signal != 'BUY':
-                    signal = 'SELL'
+        atr = df['ATR'].iloc[-1]
+        last_bb_upper = df['BB_Upper'].iloc[-1]
+        last_bb_lower = df['BB_Lower'].iloc[-1]
         
-        return {
-            'signal': signal,
-            'breakouts': breakouts,
-            'count': len(breakouts)
-        }
-    
-    def _find_support_resistance(self, df: pd.DataFrame) -> Dict:
-        """Find key support and resistance levels"""
-        if len(df) < 50:
-            return {'support': [], 'resistance': [], 'signal': 'WAIT'}
+        avg_atr = df['ATR'].tail(20).mean()
+        if atr < avg_atr * 0.70:
+            return {'signal': 'WAIT', 'signals': ['❌ Volatility too low'], 'score': 0, 'strength': 0}
+        confirmation_count += 1
+        signals.append("✅ High volatility")
         
-        # Find pivot points
-        highs = df['high'].iloc[-50:]
-        lows = df['low'].iloc[-50:]
+        trend_confirmed = False
+        trend_direction = None
+        if last_ema5 > last_ema9 > last_ema21:
+            trend_confirmed = True
+            trend_direction = 'UP'
+        elif last_ema5 < last_ema9 < last_ema21:
+            trend_confirmed = True
+            trend_direction = 'DOWN'
         
-        # Simple pivot calculation
-        pivot = (df['high'].iloc[-1] + df['low'].iloc[-1] + df['close'].iloc[-1]) / 3
+        if not trend_confirmed:
+            return {'signal': 'WAIT', 'signals': ['❌ EMA not aligned'], 'score': 0, 'strength': 0}
         
-        resistance1 = 2 * pivot - lows.min()
-        support1 = 2 * pivot - highs.max()
+        confirmation_count += 1
+        signals.append(f"✅ Trend {trend_direction}")
         
-        resistance2 = pivot + (highs.max() - lows.min())
-        support2 = pivot - (highs.max() - lows.min())
+        momentum_valid = False
+        if trend_direction == 'UP':
+            candle_1_bullish = last_close > last_open
+            candle_2_bullish = prev_close > prev_open
+            candle_3_bullish = prev2_close > prev2_open
+            body_1 = abs(last_close - last_open)
+            body_2 = abs(prev_close - prev_open)
+            strength_increasing = body_1 >= body_2 * 0.8
+            momentum_valid = candle_1_bullish and candle_2_bullish and candle_3_bullish and strength_increasing
+            if momentum_valid:
+                signals.append(f"✅ 3-candle bullish momentum")
+        else:
+            candle_1_bearish = last_close < last_open
+            candle_2_bearish = prev_close < prev_open
+            candle_3_bearish = prev2_close < prev2_open
+            body_1 = abs(last_close - last_open)
+            body_2 = abs(prev_close - prev_open)
+            strength_maintaining = body_1 >= body_2 * 0.8
+            momentum_valid = candle_1_bearish and candle_2_bearish and candle_3_bearish and strength_maintaining
+            if momentum_valid:
+                signals.append(f"✅ 3-candle bearish momentum")
         
-        current_price = df['close'].iloc[-1]
+        if not momentum_valid:
+            return {'signal': 'WAIT', 'signals': ['❌ Weak momentum (not 3 confirmed)'], 'score': 0, 'strength': 0}
+        confirmation_count += 1
         
+        price_action_valid = False
+        if trend_direction == 'UP':
+            price_action_valid = (last_low > prev_low) and (prev_low > prev2_low)
+            if price_action_valid: signals.append("✅ Higher lows confirmed")
+        else:
+            price_action_valid = (last_high < prev_high) and (prev_high < prev2_high)
+            if price_action_valid: signals.append("✅ Lower highs confirmed")
+            
+        if not price_action_valid:
+            return {'signal': 'WAIT', 'signals': ['❌ Price action broken'], 'score': 0, 'strength': 0}
+        confirmation_count += 1
+        
+        pullback_valid = False
+        if trend_direction == 'UP':
+            pullback_valid = prev_close > last_ema9 and last_close < last_ema9 and last_close > last_ema21
+        else:
+            pullback_valid = prev_close < last_ema9 and last_close > last_ema9 and last_close < last_ema21
+            
+        if pullback_valid:
+            signals.append("✅ Pullback to EMA9")
+        else:
+            return {'signal': 'WAIT', 'signals': ['❌ No EMA9 pullback'], 'score': 0, 'strength': 0}
+        confirmation_count += 1
+        
+        rsi_valid = False
+        if trend_direction == 'UP':
+            rsi_valid = 25 <= last_rsi <= 55
+        else:
+            rsi_valid = 45 <= last_rsi <= 75
+            
+        if rsi_valid:
+            signals.append(f"✅ RSI valid ({last_rsi:.0f})")
+        else:
+            return {'signal': 'WAIT', 'signals': [f'❌ RSI invalid ({last_rsi:.0f})'], 'score': 0, 'strength': 0}
+        confirmation_count += 1
+        
+        macd_valid = False
+        if trend_direction == 'UP':
+            macd_valid = last_histogram > 0 and last_macd > last_signal_line
+        else:
+            macd_valid = last_histogram < 0 and last_macd < last_signal_line
+            
+        if macd_valid:
+            signals.append("✅ MACD valid")
+        else:
+            return {'signal': 'WAIT', 'signals': ['❌ MACD misaligned'], 'score': 0, 'strength': 0}
+        confirmation_count += 1
+        
+        bb_valid = last_close > last_bb_lower and last_close < last_bb_upper
+        if bb_valid:
+            signals.append("✅ Price in BB range")
+            confirmation_count += 1
+        
+        current_volume = df['tick_volume'].iloc[-1]
+        avg_volume = df['tick_volume'].tail(20).mean()
+        if current_volume >= avg_volume * 1.0:
+            signals.append(f"✅ Volume surge ({current_volume:.0f})")
+            confirmation_count += 1
+        
+        required_confirmations = 7
+        if confirmation_count >= required_confirmations:
+            signal = 'BUY' if trend_direction == 'UP' else 'SELL'
+            score = 1 if signal == 'BUY' else -1
+            strength = min(confirmation_count / 9, 1.0)
+            signals.append(f"\\n🎯 SIGNAL VALID: {confirmation_count}/9 ✓")
+        else:
+            signal = 'WAIT'
+            score = 0
+            strength = 0
+            signals.append(f"\\n❌ Only {confirmation_count}/9 - INSUFFICIENT")
+        
+        return {'signal': signal, 'signals': signals, 'score': score, 'strength': strength, 'confirmations': confirmation_count, 'trend': trend_direction}
+
+    def _analyze_strict_confluence(self, df: pd.DataFrame) -> dict:
+        if len(df) < 200:
+            return {'signal': 'NEUTRAL', 'strength': 0.0}
+
+        df = df.copy()
+        df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
+        df['ema_200'] = df['close'].ewm(span=200, adjust=False).mean()
+        df['rsi'] = calculate_rsi(df['close'], period=14)
+        df['macd'], df['macd_signal'], df['macd_hist'] = calculate_macd(df['close'])
+        df['atr'] = calculate_atr(df, period=14)
+        
+        current = df.iloc[-1]
+        previous = df.iloc[-2]
+
         signal = 'WAIT'
-        
-        # Signal based on proximity to S/R
-        if abs(current_price - support1) / current_price < 0.002:  # Within 0.2%
+        strength = 0.0
+
+        atr_sma = df['atr'].rolling(window=50).mean().iloc[-1]
+        if current['atr'] < (atr_sma * 1.2):
+            return {'signal': 'WAIT', 'strength': 0.0, 'atr_value': current['atr'], 'close_price': current['close'], 'reasons': ["ATR too low (Sideways market)"]}
+
+        bounce_tolerance = current['atr'] * 0.3
+
+        bullish_trend = current['close'] > current['ema_50'] > current['ema_200']
+        bullish_momentum = 50 < current['rsi'] < 65 and current['macd_hist'] > 0 and current['macd'] > current['macd_signal']
+        price_bouncing_up = (previous['low'] <= previous['ema_50'] + bounce_tolerance) and (current['close'] > current['ema_50'])
+
+        if bullish_trend and bullish_momentum and price_bouncing_up:
             signal = 'BUY'
-        elif abs(current_price - resistance1) / current_price < 0.002:
+            strength = 0.85 
+
+        bearish_trend = current['close'] < current['ema_50'] < current['ema_200']
+        bearish_momentum = 35 < current['rsi'] < 50 and current['macd_hist'] < 0 and current['macd'] < current['macd_signal']
+        price_bouncing_down = (previous['high'] >= previous['ema_50'] - bounce_tolerance) and (current['close'] < current['ema_50'])
+
+        if bearish_trend and bearish_momentum and price_bouncing_down:
             signal = 'SELL'
-        
-        return {
-            'support': [support2, support1],
-            'resistance': [resistance1, resistance2],
-            'pivot': pivot,
-            'signal': signal,
-            'current_price': current_price
-        }
-    
-    def _scalping_signals(self, df: pd.DataFrame) -> Dict:
-        """Fast scalping signals based on micro movements"""
-        if len(df) < 10:
-            return {'signal': 'WAIT', 'signals': [], 'score': 0}
-        
-        signals = []
-        score = 0
-        
-        # Get recent candles
-        recent = df.tail(5)
-        
-        # 1. Quick momentum
-        momentum_1 = (recent['close'].iloc[-1] / recent['close'].iloc[-2] - 1) * 100
-        if momentum_1 > 0.05:  # Even 0.05% move
-            signals.append(f"Quick UP momentum ({momentum_1:+.3f}%)")
-            score += 1
-        elif momentum_1 < -0.05:
-            signals.append(f"Quick DOWN momentum ({momentum_1:+.3f}%)")
-            score -= 1
-        
-        # 2. Volume spike
-        avg_volume = df['tick_volume'].iloc[-10:-1].mean()
-        last_volume = df['tick_volume'].iloc[-1]
-        
-        if last_volume > avg_volume * 1.2:
-            signals.append("Volume Spike")
-            if momentum_1 > 0:
-                score += 1
-            else:
-                score -= 1
-        
-        # 3. Consecutive moves
-        consecutive_up = 0
-        consecutive_down = 0
-        
-        for i in range(-5, 0):
-            if df['close'].iloc[i] > df['close'].iloc[i-1]:
-                consecutive_up += 1
-            elif df['close'].iloc[i] < df['close'].iloc[i-1]:
-                consecutive_down += 1
-        
-        if consecutive_up >= 3:
-            signals.append(f"{consecutive_up} consecutive green candles")
-            score += 2
-        elif consecutive_down >= 3:
-            signals.append(f"{consecutive_down} consecutive red candles")
-            score -= 2
-        
-        # Decision
-        if score >= 2:
-            signal = 'BUY'
-        elif score <= -2:
-            signal = 'SELL'
-        else:
-            signal = 'WAIT'
-        
-        return {
-            'signal': signal,
-            'signals': signals,
-            'score': score
-        }
-    
-    def _analyze_news_simple(self, symbol: str) -> Dict:
-        """Simplified news analysis - less restrictive"""
-        # Skip news for faster execution in aggressive mode
-        return {
-            'impact': 'NEUTRAL',
-            'sentiment_score': 0,
-            'headlines': []
-        }
-    
-    def _get_economic_calendar_light(self, config: dict) -> Dict:
-        """Lighter economic calendar - don't block trading"""
-        
-        # If user wants to ignore calendar
-        if config.get('current', {}).get('ignore_economic_calendar', False):
-            return {
-                'impact': 'LOW',
-                'events': [],
-                'should_reduce_confidence': False
-            }
-        
-        # Otherwise just warn but don't block
-        return {
-            'impact': 'MEDIUM',
-            'events': ['Economic events not blocking trades'],
-            'should_reduce_confidence': False  # Don't reduce confidence!
-        }
-    
-    def _combine_signals_aggressive(self, analysis: Dict, config: dict) -> Dict:
-        """Combine signals with AGGRESSIVE strategy - more trades!"""
-        
-        strength = 0
+            strength = 0.85 
+
+        return {'signal': signal, 'strength': strength, 'atr_value': current['atr'], 'close_price': current['close'], 'reasons': [f"Strict Confluence: {signal}"] if signal != 'WAIT' else []}
+
+    def _combine_signals_aggressive(self, analysis: Dict, config: dict, ai_bias: str = 'NEUTRAL') -> Dict:
         reasons = []
+        strength = 0.0
         
-        min_threshold = config.get('current', {}).get('min_signal_strength', 0.1)
-        
-        # Technical: 30% (reduced from 50%)
-        tech = analysis['technical']
-        if tech['signal'] == 'BUY':
-            strength += 0.3
-            reasons.append(f"✅ Technical BUY ({tech['bullish']}/{tech['bearish']})")
-        elif tech['signal'] == 'SELL':
-            strength -= 0.3
-            reasons.append(f"❌ Technical SELL ({tech['bearish']}/{tech['bullish']})")
-        
-        # Patterns: 25%
+        tech = analysis.get('technical', {})
         patterns = analysis.get('patterns', {})
-        if patterns.get('count', 0) > 0:
-            if patterns['signal'] == 'BUY':
-                strength += 0.25
-                reasons.append(f"✅ Pattern: {', '.join(patterns['patterns'][:2])}")
-            elif patterns['signal'] == 'SELL':
-                strength -= 0.25
-                reasons.append(f"❌ Pattern: {', '.join(patterns['patterns'][:2])}")
-        
-        # Breakout: 20%
         breakout = analysis.get('breakout', {})
-        if breakout.get('count', 0) > 0:
-            if breakout['signal'] == 'BUY':
-                strength += 0.2
-                reasons.append(f"✅ Breakout UP")
-            elif breakout['signal'] == 'SELL':
-                strength -= 0.2
-                reasons.append(f"❌ Breakout DOWN")
-        
-        # Support/Resistance: 15%
         sr = analysis.get('support_resistance', {})
-        if sr.get('signal') == 'BUY':
-            strength += 0.15
-            reasons.append(f"✅ Near Support")
-        elif sr.get('signal') == 'SELL':
-            strength -= 0.15
-            reasons.append(f"❌ Near Resistance")
-        
-        # Scalping: 10%
         scalp = analysis.get('scalping', {})
-        if scalp.get('score', 0) >= 2:
-            strength += 0.1
-            reasons.append(f"✅ Scalping signals")
-        elif scalp.get('score', 0) <= -2:
-            strength -= 0.1
-            reasons.append(f"❌ Scalping signals")
+
+        scalp_confirmations = scalp.get('confirmations', 0)
         
-        # Economic calendar - DON'T reduce strength much
-        calendar = analysis.get('calendar', {})
-        if calendar.get('should_reduce_confidence', False):
-            strength *= 0.95  # Only 5% reduction instead of 30%
-            reasons.append("⚠️ Economic event (minor impact)")
-        
-        # AGGRESSIVE DECISION with LOW thresholds
-        abs_strength = abs(strength)
-        
-        trade_mode = config.get('current', {}).get('trade_mode', 'AGGRESSIVE')
-        
-        if trade_mode == 'SCALPING':
-            # Ultra low threshold for scalping
-            buy_threshold = 0.05
-            sell_threshold = -0.05
-        elif trade_mode == 'AGGRESSIVE':
-            # Low threshold
-            buy_threshold = 0.1
-            sell_threshold = -0.1
+        if scalp.get('signal') in ['BUY', 'SELL'] and scalp_confirmations >= 5:
+            master_direction = scalp['signal']
+            base_strength = min(scalp_confirmations / 7, 1.0)
+            reasons.append(f"🎯 SCALPING SIGNAL: {master_direction} ({scalp_confirmations}/7 confirmations)")
+            reasons.append(f"Trend: {scalp.get('trend', '?').upper()}")
+            strength = base_strength
+        elif scalp.get('signal') in ['BUY', 'SELL'] and scalp_confirmations >= 4:
+            master_direction = scalp['signal']
+            strength = 0.65
+            reasons.append(f"⚠️ Scalping signal: {scalp_confirmations}/7 confirmations (acceptable)")
         else:
-            # Moderate threshold
-            buy_threshold = 0.2
-            sell_threshold = -0.2
+            master_direction = 'WAIT'
+            if tech.get('signal') in ['BUY', 'SELL']:
+                master_direction = tech['signal']
+                strength = 0.5
+                reasons.append(f"📊 Technical signal: {master_direction}")
+            
+            if master_direction == 'WAIT':
+                return {'signal': 'WAIT', 'strength': 0.0, 'reasons': ["⏸️ No high-quality signals"], 'raw_strength': 0}
+
+        if scalp_confirmations < 4:
+            if master_direction == 'BUY':
+                reasons.append("🌊 Master Trend: BULLISH")
+                if tech.get('signal') == 'BUY': strength += 0.35; reasons.append("✅ Teknikal Searah")
+                if patterns.get('signal') == 'BUY': strength += 0.25; reasons.append("✅ Pola Candle Mendukung")
+                if sr.get('signal') == 'BUY': strength += 0.20; reasons.append("✅ Memantul dari Support")
+                if breakout.get('signal') == 'BUY': strength += 0.20; reasons.append("✅ Momentum Breakout UP")
+            elif master_direction == 'SELL':
+                reasons.append("🌊 Master Trend: BEARISH")
+                if tech.get('signal') == 'SELL': strength += 0.35; reasons.append("🔻 Teknikal Searah")
+                if patterns.get('signal') == 'SELL': strength += 0.25; reasons.append("🔻 Pola Candle Mendukung")
+                if sr.get('signal') == 'SELL': strength += 0.20; reasons.append("🔻 Terpantul dari Resistance")
+                if breakout.get('signal') == 'SELL': strength += 0.20; reasons.append("🔻 Momentum Breakout DOWN")
+
+        if ai_bias != 'NEUTRAL':
+            if ai_bias == master_direction:
+                strength += 0.15 
+                reasons.append(f"🤖 Gemini AI Setuju: {ai_bias}")
+            else:
+                strength -= 0.30 
+                reasons.append(f"⚠️ Gemini AI Berlawanan: Membaca {ai_bias}")
+
+        abs_strength = min(abs(strength), 1.0)
+        min_threshold = max(config.get('current', {}).get('min_signal_strength', 0.60), 0.60)
         
-        if strength >= buy_threshold:
-            signal = 'BUY'
-            reasons.append(f"🚀 BUY SIGNAL ({abs_strength:.0%})")
-        elif strength <= sell_threshold:
-            signal = 'SELL'
-            reasons.append(f"🔻 SELL SIGNAL ({abs_strength:.0%})")
+        if abs_strength >= min_threshold:
+            signal = master_direction
+            reasons.append(f"🚀 EKSEKUSI VALID ({abs_strength:.0%} >= {min_threshold:.0%})")
         else:
             signal = 'WAIT'
-            reasons.append(f"⏸️ Signal weak ({abs_strength:.0%} < {min_threshold:.0%})")
-        
-        return {
-            'signal': signal,
-            'strength': abs_strength,
-            'reasons': reasons,
-            'raw_strength': strength
-        }
-    
-    # Helper functions
-    def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-    
-    def _calculate_macd(self, prices: pd.Series) -> tuple:
-        exp1 = prices.ewm(span=12, adjust=False).mean()
-        exp2 = prices.ewm(span=26, adjust=False).mean()
-        macd = exp1 - exp2
-        signal = macd.ewm(span=9, adjust=False).mean()
-        histogram = macd - signal
-        return macd, signal, histogram
-    
-    def _calculate_stochastic(self, df: pd.DataFrame, period: int = 14) -> tuple:
-        low_min = df['low'].rolling(window=period).min()
-        high_max = df['high'].rolling(window=period).max()
-        stoch_k = 100 * (df['close'] - low_min) / (high_max - low_min)
-        stoch_d = stoch_k.rolling(window=3).mean()
-        return stoch_k, stoch_d
-    
-    def _calculate_atr_value(self, df: pd.DataFrame, period: int = 14) -> float:
-        high_low = df['high'] - df['low']
-        high_close = np.abs(df['high'] - df['close'].shift())
-        low_close = np.abs(df['low'] - df['close'].shift())
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
-        true_range = ranges.max(axis=1)
-        atr = true_range.rolling(period).mean().iloc[-1]
-        return atr if not pd.isna(atr) else 0.0001
+            reasons.append(f"⏸️ Batal: Syarat konfirmasi kurang ({abs_strength:.0%} < {min_threshold:.0%})")
+
+        return {'signal': signal, 'strength': abs_strength, 'reasons': reasons, 'raw_strength': strength if master_direction == 'BUY' else -strength}

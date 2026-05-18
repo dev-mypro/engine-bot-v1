@@ -1,0 +1,87 @@
+import json
+import urllib
+import pandas as pd
+import sys
+from datetime import datetime, date
+from . import glob
+import ssl
+from . import functions as fn
+from dateutil.relativedelta import relativedelta
+import time
+
+PY3 = sys.version_info[0] == 3
+
+if PY3:  # Python 3+
+    from urllib.request import urlopen  # type: ignore
+    from urllib.parse import quote  # type: ignore
+else:  # Python 2.X
+    from urllib import urlopen  # type: ignore
+    from urllib import quote  # type: ignore
+
+
+class ParametersError(ValueError):
+    pass
+
+
+class CredentialsError(ValueError):
+    pass
+
+
+class LoginError(AttributeError):
+    pass
+
+
+class DateError(ValueError):
+    pass
+
+
+class WebRequestError(ValueError):
+    pass
+
+
+def getSearch(term=None, category=None, output_type=None):
+    """
+
+    You can search for keyword, term, or by category. If you do not know which category to look for, just use the search/{term} endpoint option.
+    ==========================================================
+
+    Parameters:
+    -----------
+    term: string .
+             term ='gold'.
+             term ='japan'
+    category: string.
+             category = 'markets'
+    output_type: string.
+             ''dict'(default) for dictionary format output, 'df' for data frame,
+             'raw' for list of dictionaries directly from the web.
+
+    Example
+    -------
+        getSearch(output_type='df')
+        getSearch(term='japan',category='markets',output_type='df')
+        getSearch(term='gold',output_type='df')
+
+    """
+
+    # d is a dictionary used for create the api url
+    d = {
+        "url_base": "/search",
+        "term": "",
+        "category": "/categories",
+        "output_type": "",
+    }
+
+    if term:
+
+        d["term"] = f"/{fn.stringOrList(term)}"
+        d["category"] = ""
+    if term and category:
+
+        d["category"] = f"?category={fn.stringOrList(category)}"
+
+    api_url_request = "%s%s%s" % (d["url_base"], d["term"], d["category"])
+    # print(api_url_request)
+
+    return fn.dataRequest(api_request=api_url_request, output_type=output_type)
+    # return

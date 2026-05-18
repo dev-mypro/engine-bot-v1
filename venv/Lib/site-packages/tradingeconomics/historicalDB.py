@@ -1,0 +1,136 @@
+import json
+import itertools
+import urllib
+import pandas as pd
+import sys
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
+from . import functions as fn
+from . import glob
+import ssl
+
+PY3 = sys.version_info[0] == 3
+
+if PY3:  # Python 3+
+    from urllib.request import urlopen  # type: ignore
+    from urllib.parse import quote  # type: ignore
+else:  # Python 2.X
+    from urllib import urlopen  # type: ignore
+    from urllib import quote  # type: ignore
+
+
+class ParametersError(ValueError):
+    pass
+
+
+class DateError(ValueError):
+    pass
+
+
+class CredentialsError(ValueError):
+    pass
+
+
+class LoginError(AttributeError):
+    pass
+
+
+class WebRequestError(ValueError):
+    pass
+
+
+def getHistorical(symbol=None, initDate=None, endDate=None, output_type=None, *args):
+    """
+    Return historical information for specific symbol.
+    =================================================================
+    Parameters:
+    -----------
+    symbol: string or list.
+             String to get data for one symbol. List of strings to get data for
+             several symbols.
+
+    output_type: string.
+             'dict'(default) for dictionary format output,
+             'raw' for list of dictionaries without any parsing.
+    Notes
+    -----
+    Must put symbol and type of data.
+    Example
+    -------
+    te.getHistorical("indu:ind", '2015-01-01')
+    te.getHistorical("indu:ind", '2015-01-01', '2017-01-01' )
+    te.getHistorical("USURTOT", '2015-01-01')
+    te.getHistorical(['aapl:us', 'indu:ind'])
+    te.getHistorical("USURTOT")
+    te.getHistorical("aapl:us")
+    te.getHistorical("are.fr.inr.rinr:worldbank")
+    te.getHistorical("RACEDISPARITY005007:fred")
+    te.getHistorical("PRTESP24031:comtrade")
+    """
+    linkAPI = "/"
+
+    fn.setup_ssl_context()
+
+    if symbol[-10:] == ":worldbank":  # type: ignore
+        linkAPI += "worldBank/historical?" + "s=" + quote(symbol[:-10], safe=":")  # type: ignore
+
+    elif symbol[-9:] == ":comtrade":  # type: ignore
+        linkAPI += "comtrade/historical/" + quote(symbol[:-9], safe=":")  # type: ignore
+
+    elif symbol[-5:] == ":fred":  # type: ignore
+        linkAPI += "fred/historical/" + quote(symbol[:-5], safe=":")  # type: ignore
+
+    elif ":" not in symbol and type(symbol) is str:  # type: ignore
+        linkAPI += "historical/ticker/" + quote(symbol, safe="")  # type: ignore
+
+    elif ":" in symbol:  # type: ignore
+        linkAPI += "markets/historical/" + quote(symbol, safe="")  # type: ignore
+    else:
+        linkAPI += "markets/historical/" + quote(",".join(symbol), safe="")  # type: ignore
+
+    if (initDate is not None) and (endDate is not None):
+        try:
+            initDateFormat = fn.validate(initDate)
+        except ValueError:
+            raise DateError(
+                "Incorrect initDate format, should be YYYY-MM-DD or MM-DD-YYYY."
+            )
+        try:
+            endDateFormat = fn.validate(endDate)
+        except ValueError:
+            raise DateError(
+                "Incorrect endDate format, should be YYYY-MM-DD or MM-DD-YYYY."
+            )
+        try:
+            fn.validatePeriod(initDate, initDateFormat, endDate, endDateFormat)
+        except ValueError:
+            raise DateError("Invalid time period.")
+        if "?" in linkAPI:
+            linkAPI += "&d1=" + quote(initDate) + "&d2=" + quote(endDate)
+        else:
+            linkAPI += "?d1=" + quote(initDate) + "&d2=" + quote(endDate)
+
+    if (initDate is not None) and endDate == None:
+        try:
+            fn.validate(initDate)
+        except ValueError:
+            raise DateError(
+                "Incorrect initDate format, should be YYYY-MM-DD or MM-DD-YYYY."
+            )
+            if initDate > str(date.today()):
+                raise DateError("Initial date out of range.")
+        if "markets" in linkAPI:
+            linkAPI += "?d1=" + quote(initDate)
+        else:
+            linkAPI += "/" + quote(initDate)
+
+    if initDate == None and (endDate is not None):
+        initDate = (
+            datetime.strptime(endDate, "%Y-%m-%d") - relativedelta(months=1)
+        ).strftime("%Y-%m-%d")
+        if "?" in linkAPI:
+            linkAPI += "&d1=" + quote(initDate) + "&d2=" + quote(endDate)
+        else:
+            linkAPI += "?d1=" + quote(initDate) + "&d2=" + quote(endDate)
+
+    return fn.dataRequest(api_request=linkAPI, output_type=output_type)

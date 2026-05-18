@@ -1,0 +1,121 @@
+import json
+import urllib
+import pandas as pd
+import sys
+from . import glob
+import ssl
+from . import functions as fn
+from dateutil.relativedelta import relativedelta
+from typing import List, Union, Optional
+
+PY3 = sys.version_info[0] == 3
+
+if PY3:  # Python 3+
+    from urllib.request import urlopen  # type: ignore
+    from urllib.parse import quote  # type: ignore
+else:  # Python 2.X
+    from urllib import urlopen  # type: ignore
+    from urllib import quote  # type: ignore
+
+
+class ParametersError(ValueError):
+    pass
+
+
+class CredentialsError(ValueError):
+    pass
+
+
+class LoginError(AttributeError):
+    pass
+
+
+class DateError(ValueError):
+    pass
+
+
+class WebRequestError(ValueError):
+    pass
+
+
+def getEarnings(
+    symbols: Optional[Union[str, List[str]]] = None,
+    country: Optional[Union[str, List[str]]] = None,
+    index: Optional[Union[str, List[str]]] = None,
+    sector: Optional[Union[str, List[str]]] = None,
+    initDate: Optional[str] = None,
+    endDate: Optional[str] = None,
+    output_type: Optional[str] = None,
+):
+    """
+    Returns earnings and revenues calendar data.
+    ==========================================================
+
+    Parameters:
+    -----------
+    symbols: string or list of strings, optional
+            Get earnings and revenues for the symbol/s specified.
+
+    country: string or list of strings, optional
+            Get earnings and revenues from stocks of specific countries.
+
+    index: string or list of strings, optional
+            Get earnings and revenues of stocks belonging to a specific indexes.
+
+    sector: string or list, optional
+            Get earnings and revenues of stocks belonging to a specific sectors.
+
+    initDate: string with format: YYYY-MM-DD.
+            For example: '2022-01-01'
+
+    endDate: string with format: YYYY-MM-DD.
+            For example: '2023-01-01'
+
+    output_type: string.
+            'dict'(default) for dictionary format output, 'df' for data frame,
+            'raw' for list of dictionaries directly from the web.
+
+    Example
+    -------
+    getEarnings(symbols = 'msft:us', initDate='2016-01-01', endDate='2017-12-31')
+    getEarnings(country = 'united states')
+    """
+
+    fn.setup_ssl_context()
+
+    linkAPI = "/earnings-revenues"
+    # Symbols must NOT be URL-encoded; TE API expects literal format like "msft:us"
+    if symbols:
+        if isinstance(symbols, list):
+            symbol_str = ",".join(symbols)
+        else:
+            symbol_str = symbols
+        linkAPI += "/symbol/" + symbol_str
+
+    elif country and fn.stringOrList(country):
+        linkAPI += "/country/" + fn.stringOrList(country)
+
+    elif index:
+        # Index must NOT be URL-encoded (e.g., 'ndx:ind' must stay literal)
+        if isinstance(index, list):
+            index_str = ",".join(index)
+        else:
+            index_str = index
+        linkAPI += "/index/" + index_str
+
+    elif sector and fn.stringOrList(sector):
+        linkAPI += "/sector/" + fn.stringOrList(sector)
+
+    linkAPI = fn.checkDates(linkAPI, initDate, endDate)
+
+    return fn.dataRequest(api_request=linkAPI, output_type=output_type)
+
+
+def getEarningsType(type=None, output_type=None):
+    fn.setup_ssl_context()
+
+    linkAPI = "/earnings?type="
+    if type:
+        linkAPI += quote((type), safe="")
+
+    return fn.dataRequest(api_request=linkAPI, output_type=output_type)
