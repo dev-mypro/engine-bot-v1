@@ -5,7 +5,7 @@ from google.genai.types import GenerationConfig
 
 
 def init_gemini(env: dict) -> genai.Client:
-    """Inisialisasi Gemini API dengan model terbaru"""
+    """Initialize Gemini API with the latest model"""
     api_key = env.get("GEMINI_API_KEY") or env.get("gemini_api_key")
 
     if not api_key or api_key == "":
@@ -39,11 +39,11 @@ def init_gemini(env: dict) -> genai.Client:
 
 
 def fetch_latest_news(api_key, symbol):
-    """Mengambil berita terbaru yang relevan dengan simbol (misal: Gold/XAUUSD)"""
+    """Fetch latest news relevant to the symbol (e.g., Gold/XAUUSD)"""
     if not api_key:
         return "No News API Key available."
 
-    # Contoh URL untuk mencari berita tentang 'Gold' atau 'USD'
+    # Example URL to search for news about 'Gold' or 'USD'
     url = f"https://newsapi.org/v2/everything?q={symbol}&sortBy=publishedAt&apiKey={api_key}&pageSize=5"
 
     try:
@@ -52,7 +52,7 @@ def fetch_latest_news(api_key, symbol):
         data = response.json()
 
         if data["status"] == "ok" and data["articles"]:
-            # Gabungkan judul dan deskripsi beberapa artikel menjadi satu string untuk dianalisis Gemini
+            # Combine title and description of several articles into a single string for Gemini analysis
             combined_text = "\n".join(
                 [f"- {a['title']}: {a['description']}" for a in data["articles"]]
             )

@@ -1,5 +1,9 @@
 import time
+import sys
 import MetaTrader5 as mt5
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 from utils.config_manager import load_config
 from utils.mt5_utils import init_mt5

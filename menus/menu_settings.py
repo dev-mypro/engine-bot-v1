@@ -95,9 +95,10 @@ def menu_5_switch_account(config: dict) -> dict:
         config["current"]["account"] = new_acc
         save_config(config)
         print(f"✅ Akun diubah menjadi: {new_acc}")
-        
-        # Hubungkan ulang ke MT5 dengan kredensial akun yang baru!
+
+        # Reconnect to MT5 with the new account credentials!
         from utils.mt5_utils import init_mt5
+
         init_mt5()
     else:
         print(f"❌ Akun {new_acc} tidak tersedia!")

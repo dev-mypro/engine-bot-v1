@@ -29,7 +29,7 @@ class MarketAnalyzer:
         config: dict = None,
         ai_bias: str = "NEUTRAL",
     ) -> Dict:
-        """Comprehensive market analysis dengan filter trade_mode"""
+        """Comprehensive market analysis with trade_mode filter"""
         if config is None:
             config = {
                 "current": {
@@ -56,33 +56,9 @@ class MarketAnalyzer:
             "overall": {"signal": "WAIT", "strength": 0, "reasons": []},
         }
 
-        if trade_mode == "CONSERVATIVE":
-            confluence_data = self._analyze_strict_confluence(df)
-            tech_signal = confluence_data.get("signal", "WAIT")
-            tech_strength = confluence_data.get("strength", 0.0)
-            min_strength = config["current"].get("min_signal_strength", 0.8)
-
-            final_signal = "WAIT"
-            if tech_signal in ["BUY", "SELL"] and tech_strength >= min_strength:
-                final_signal = tech_signal
-                reason = f"Strict Confluence Matched: {tech_signal} (Strength: {tech_strength})"
-            else:
-                reason = "Menunggu setup Confluence terbentuk (EMA + RSI + MACD + ATR)"
-
-            analysis["overall"] = {
-                "action": final_signal if final_signal != "WAIT" else None,
-                "signal": final_signal,
-                "strength": tech_strength,
-                "reasons": [reason] + confluence_data.get("reasons", []),
-                "atr": confluence_data.get("atr_value", calculate_atr_value(df)),
-                "close_price": confluence_data.get(
-                    "close_price", df["close"].iloc[-1] if not df.empty else 0
-                ),
-            }
-        else:
-            analysis["overall"] = self._combine_signals_aggressive(
-                analysis, config, ai_bias=ai_bias
-            )
+        analysis["overall"] = self._combine_signals_aggressive(
+            analysis, config, ai_bias=ai_bias
+        )
 
         return analysis
 
@@ -397,71 +373,6 @@ class MarketAnalyzer:
             "strength": strength,
             "confirmations": confirmation_count,
             "trend": trend_direction,
-        }
-
-    def _analyze_strict_confluence(self, df: pd.DataFrame) -> dict:
-        if len(df) < 200:
-            return {"signal": "NEUTRAL", "strength": 0.0}
-
-        df = df.copy()
-        df["ema_50"] = df["close"].ewm(span=50, adjust=False).mean()
-        df["ema_200"] = df["close"].ewm(span=200, adjust=False).mean()
-        df["rsi"] = calculate_rsi(df["close"], period=14)
-        df["macd"], df["macd_signal"], df["macd_hist"] = calculate_macd(df["close"])
-        df["atr"] = calculate_atr(df, period=14)
-
-        current = df.iloc[-1]
-        previous = df.iloc[-2]
-
-        signal = "WAIT"
-        strength = 0.0
-
-        atr_sma = df["atr"].rolling(window=50).mean().iloc[-1]
-        if current["atr"] < (atr_sma * 1.2):
-            return {
-                "signal": "WAIT",
-                "strength": 0.0,
-                "atr_value": current["atr"],
-                "close_price": current["close"],
-                "reasons": ["ATR too low (Sideways market)"],
-            }
-
-        bounce_tolerance = current["atr"] * 0.3
-
-        bullish_trend = current["close"] > current["ema_50"] > current["ema_200"]
-        bullish_momentum = (
-            50 < current["rsi"] < 65
-            and current["macd_hist"] > 0
-            and current["macd"] > current["macd_signal"]
-        )
-        price_bouncing_up = (
-            previous["low"] <= previous["ema_50"] + bounce_tolerance
-        ) and (current["close"] > current["ema_50"])
-
-        if bullish_trend and bullish_momentum and price_bouncing_up:
-            signal = "BUY"
-            strength = 0.85
-
-        bearish_trend = current["close"] < current["ema_50"] < current["ema_200"]
-        bearish_momentum = (
-            35 < current["rsi"] < 50
-            and current["macd_hist"] < 0
-            and current["macd"] < current["macd_signal"]
-        )
-        price_bouncing_down = (
-            previous["high"] >= previous["ema_50"] - bounce_tolerance
-        ) and (current["close"] < current["ema_50"])
-
-        if bearish_trend and bearish_momentum and price_bouncing_down:
-            signal = "SELL"
-            strength = 0.85
-
-        return {
-            "signal": signal,
-            "strength": strength,
-            "atr_value": current["atr"],
-            "close_price": current["close"],
-            "reasons": [f"Strict Confluence: {signal}"] if signal != "WAIT" else [],
         }
 
     def _combine_signals_aggressive(

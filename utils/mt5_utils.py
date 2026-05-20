@@ -171,18 +171,34 @@ def select_symbol(symbol_baru: str) -> bool:
                 print(f"✅ Symbol {available} selected")
                 return True
 
+    # Strip common suffixes to get base symbol
+    base_symbol = symbol_upper
+    for suffix in ["-M", "_M", ".A", "-A", "M"]:
+        if symbol_upper.endswith(suffix):
+            base_symbol = symbol_upper[:-len(suffix)]
+            break
+
     variations = [
         symbol_upper,
-        f"{symbol_upper}m",
-        f"{symbol_upper}-m",
-        f"{symbol_upper}.a",
-        f"{symbol_upper}-a",
-        f"{symbol_upper}_m",
+        base_symbol,
+        f"{base_symbol}m",
+        f"{base_symbol}-m",
+        f"{base_symbol}.a",
+        f"{base_symbol}-a",
+        f"{base_symbol}_m",
+        base_symbol.replace("XAU", "GOLD"),
+        base_symbol.replace("GOLD", "XAU"),
         symbol_upper.replace("XAU", "GOLD"),
         symbol_upper.replace("GOLD", "XAU"),
     ]
 
-    for variant in variations:
+    # Remove duplicates while preserving order
+    unique_variations = []
+    for var in variations:
+        if var not in unique_variations:
+            unique_variations.append(var)
+
+    for variant in unique_variations:
         for available in available_symbols:
             if available.upper() == variant:
                 if mt5.symbol_select(available, True):
